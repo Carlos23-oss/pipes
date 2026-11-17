@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.graph_objects as go
+import matplotlib.pyplot as plt
 import time
 import math
 
@@ -176,7 +176,7 @@ c5.metric("⚡ Hash-Map Exec Time", f"{exec_time_ms:.2f} ms")
 
 st.divider()
 
-# --- 5. SELECTOR DE VISTAS (EVITA COLAPSO DE PLOTLY) ---
+# --- 5. SELECTOR DE VISTAS ---
 view_mode = st.radio(
     "Select View:",
     ["📋 Actionable Triage Report", "🗺️ Spatial Viewport Preview", "🐍 Live Python Engine Code"],
@@ -191,7 +191,7 @@ if view_mode == "📋 Actionable Triage Report":
     else:
         st.dataframe(df_triage, use_container_width=True, hide_index=True)
         
-        col_btn1, col_btn2 = st.columns([1, 1])
+        col_btn1, col_btn2 = st.columns(2)
         with col_btn1:
             csv_export = df_triage.to_csv(index=False).encode("utf-8")
             st.download_button(
@@ -210,3 +210,4 @@ if view_mode == "📋 Actionable Triage Report":
                 act = row["ACTION"]
                 if act in ["CREATE", "UPDATE / REPLACE"]:
                     updated_master_map[aid] = field_map[aid]
+                elif act == "DELETE" and aid in updated_master_map:
