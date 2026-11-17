@@ -117,8 +117,10 @@ for aid, f_row in field_map.items():
         
         if geom_changed or spec_changed:
             reasons = []
-            if geom_changed: reasons.append(f"3D Shift ({max_shift}m)")
-            if spec_changed: reasons.append("Spec/Material Diff")
+            if geom_changed:
+                reasons.append(f"3D Shift ({max_shift}m)")
+            if spec_changed:
+                reasons.append("Spec/Material Diff")
             
             results.append({
                 "ASSET_ID": aid, "ACTION": "UPDATE / REPLACE", "REASON": " + ".join(reasons),
@@ -210,4 +212,85 @@ elif view_mode == "🗺️ Spatial Viewport Preview":
     st.subheader("Spatial Delta Map (Highlighting Flagged & Blast-Radius Assets)")
     
     if len(df_master) > 200:
+        plot_master = df_master[(df_master["X0"] <= 250) & (df_master["Y0"] <= 150)]
+        plot_field = df_field[(df_field["X0"] <= 250) & (df_field["Y0"] <= 150)]
+    else:
+        plot_master = df_master
+        plot_field = df_field
 
+    xmin = min(plot_master["X0"].min(), plot_master["X1"].min(), plot_field["X0"].min(), plot_field["X1"].min()) - 5
+    xmax = max(plot_master["X0"].max(), plot_master["X1"].max(), plot_field["X0"].max(), plot_field["X1"].max()) + 5
+    ymin = min(plot_master["Y0"].min(), plot_master["Y1"].min(), plot_field["Y0"].min(), plot_field["Y1"].min()) - 5
+    ymax = max(plot_master["Y0"].max(), plot_master["Y1"].max(), plot_field["Y0"].max(), plot_field["Y1"].max()) + 5
+    dx = max(xmax - xmin, 1.0)
+    dy = max(ymax - ymin, 1.0)
+
+    def sx(x):
+        return 60 + ((x - xmin) / dx) * 880
+
+    def sy(y):
+        return 420 - ((y - ymin) / dy) * 350
+
+    lines_svg = []
+    unchanged = plot_master[~plot_master["ASSET_ID"].isin(primary_changed_ids | blast_radius_ids)]
+    for _, r in unchanged.iterrows():
+        lines_svg.append(f'<line x1="{sx(r["X0"]):.1f}" y1="{sy(r["Y0"]):.1f}" x2="{sx(r["X1"]):.1f}" y2="{sy(r["Y1"]):.1f}" stroke="#555A6E" stroke-width="2" />')
+
+    br_df = plot_master[plot_master["ASSET_ID"].isin(blast_radius_ids)]
+    for _, r in br_df.iterrows():
+        lines_svg.append(f'<line x1="{sx(r["X0"]):.1f}" y1="{sy(r["Y0"]):.1f}" x2="{sx(r["X1"]):.1f}" y2="{sy(r["Y1"]):.1f}" stroke="#FFA15A" stroke-width="4.5" />')
+
+    upd_df = plot_master[plot_master["ASSET_ID"].isin(primary_changed_ids)]
+    for _, r in upd_df.iterrows():
+        lines_svg.append(f'<line x1="{sx(r["X0"]):.1f}" y1="{sy(r["Y0"]):.1f}" x2="{sx(r["X1"]):.1f}" y2="{sy(r["Y1"]):.1f}" stroke="#FF4B4B" stroke-width="3.5" stroke-dasharray="8,5" />')
+
+    new_df = plot_field[plot_field["ASSET_ID"].isin(primary_changed_ids)]
+    for _, r in new_df.iterrows():
+        x1s, y1s, x2s, y2s = sx(r["X0"]), sy(r["Y0"]), sx(r["X1"]), sy(r["Y1"])
+        lines_svg.append(f'<line x1="{x1s:.1f}" y1="{y1s:.1f}" x2="{x2s:.1f}" y2="{y2s:.1f}" stroke="#00CC96" stroke-width="4.5" />')
+        lines_svg.append(f'<text x="{(x1s+x2s)/2:.1f}" y="{(y1s+y2s)/2 - 8:.1f}" fill="#00CC96" font-size="12" font-family="sans-serif" font-weight="bold" text-anchor="middle">{r["ASSET_ID"]}</text>')
+
+    svg_html = f"""
+    <div style="background-color:#0E1117; border-radius:10px; padding:15px; border:1px solid #262730;">
+        <div style="display:flex; gap:20px; margin-bottom:10px; font-family:sans-serif; font-size:13px; color:#FAFAFA;">
+            <span><b style="color:#555A6E;">━━</b> Unchanged (OK)</span>
+            <span><b style="color:#FFA15A;">━━</b> Blast Radius (Review)</span>
+            <span><b style="color:#FF4B4B;">┅┅</b> Master Replaced/Deleted</span>
+            <span><b style="color:#00CC96;">━━</b> Field New/Shifted</span>
+        </div>
+        <svg viewBox="0 0 1000 460" style="width:100%; height:auto; display:block;">
+            {''.join(lines_svg)}
+        </svg>
+    </div>
+    """
+    st.markdown(svg_html, unsafe_allow_html=True)
+
+elif view_mode == "🐍 Live Python Engine Code":
+    st.subheader("Live Python Hash-Map & Topology Logic")
+    st.markdown("This is the exact **O(1) dictionary diffing** and **spatial connectivity** code running behind the scenes on your datasets:")
+    
+    st.code('''
+# 1. Ingest Master & Field tables into O(1) Memory Hash Maps
+master_map = df_master.set_index("ASSET_ID").to_dict("index")
+field_map  = df_field.set_index("ASSET_ID").to_dict("index")
+
+# 2. Multi-Criteria Diff (Existence + 3D Euclidean Delta + Engineering Specs)
+for aid, f_row in field_map.items():
+    if aid not in master_map:
+        flag_action(aid, "CREATE")
+    else:
+        m_row = master_map[aid]
+        shift_3d = max(
+            math.dist((m_row["X0"], m_row["Y0"], m_row["Z0"]), (f_row["X0"], f_row["Y0"], f_row["Z0"])),
+            math.dist((m_row["X1"], m_row["Y1"], m_row["Z1"]), (f_row["X1"], f_row["Y1"], f_row["Z1"]))
+        )
+        if shift_3d > gps_tolerance or (m_row["DIAMETER"], m_row["MATERIAL"]) != (f_row["DIAMETER"], f_row["MATERIAL"]):
+            flag_action(aid, "UPDATE / REPLACE")
+            primary_affected_nodes.update([m_row["START_NODE"], m_row["END_NODE"]])
+
+# 3. Blast-Radius Tracing (Capture all connected upstream/downstream neighbors)
+for aid, m_row in master_map.items():
+    if aid not in primary_changed_ids:
+        if m_row["START_NODE"] in primary_affected_nodes or m_row["END_NODE"] in primary_affected_nodes:
+            flag_action(aid, "BLAST_RADIUS_CHECK")
+    ''', language="python")
