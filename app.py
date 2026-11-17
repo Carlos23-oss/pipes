@@ -1,132 +1,213 @@
 import streamlit as st
+import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
+import time
+import math
 
-st.set_page_config(page_title="Spatial Delta & Blast Radius Engine", layout="wide")
+st.set_page_config(page_title="Spatial Delta & Topology Engine", layout="wide")
 
-st.title("⚡ Spatial Delta & Topology Engine (BIM / VDC Sandbox)")
-st.markdown("Simulación en tiempo real de validación *As-Built* mediante **Hash Maps O(1)** y cálculo de **Blast Radius**.")
+st.title("⚡ Spatial Delta & Topology Engine (Production Data Validator)")
+st.markdown("Automated **As-Built QA/QC** pipeline: ingests Master vs. Field datasets into **O(1) Hash Maps**, detects 3D geometric/spec deltas, and traces topological **Blast-Radius** impact.")
 
-MASTER_NODES = {
-    "MH-01": (0.0, 0.0),
-    "MH-02": (10.0, 0.0),
-    "MH-03": (20.0, 0.0),
-    "MH-04": (30.0, 0.0),
-    "MH-05": (20.0, 10.0)
-}
-
-MASTER_PIPES = {
-    "P-101": {"start": "MH-01", "end": "MH-02", "diam": 200, "mat": "Steel", "offset_y": 0.0},
-    "P-102": {"start": "MH-02", "end": "MH-03", "diam": 200, "mat": "Steel", "offset_y": 0.0},
-    "P-103": {"start": "MH-03", "end": "MH-04", "diam": 200, "mat": "Steel", "offset_y": 0.0},
-    "P-104": {"start": "MH-03", "end": "MH-05", "diam": 150, "mat": "HDPE",  "offset_y": 0.0},
-}
-
-st.sidebar.header("🛠️ Field Survey Submission (Layer B)")
-st.sidebar.caption("Modifica parámetros de campo para simular desviaciones en obra:")
-
-target_pipe = st.sidebar.selectbox("Seleccionar tubería en campo:", list(MASTER_PIPES.keys()), index=1)
-shift_y = st.sidebar.slider("Desviación lateral Y (metros):", -3.0, 3.0, 1.5, step=0.1)
-new_diam = st.sidebar.selectbox("Diámetro instalado (mm):", [150, 200, 250, 300], index=1)
-new_mat = st.sidebar.selectbox("Material instalado:", ["Steel", "HDPE", "Copper"], index=0)
-add_new_pipe = st.sidebar.checkbox("Instalar nueva derivación (P-105)", value=False)
-tolerance = st.sidebar.slider("Tolerancia espacial GPS (m):", 0.0, 0.5, 0.05, step=0.01)
-
-field_pipes = {k: v.copy() for k, v in MASTER_PIPES.items()}
-field_pipes[target_pipe]["offset_y"] = shift_y
-field_pipes[target_pipe]["diam"] = new_diam
-field_pipes[target_pipe]["mat"] = new_mat
-
-if add_new_pipe:
-    field_pipes["P-105"] = {"start": "MH-04", "end": "MH-05", "diam": 150, "mat": "Steel", "offset_y": 0.0}
-
-to_create, to_update, blast_radius_pipes, blast_radius_nodes = [], [], [], []
-
-for pid, f_data in field_pipes.items():
-    if pid not in MASTER_PIPES:
-        to_create.append(pid)
-        blast_radius_nodes.extend([f_data["start"], f_data["end"]])
-    else:
-        m_data = MASTER_PIPES[pid]
-        geom_delta = abs(f_data["offset_y"] - m_data["offset_y"]) > tolerance
-        spec_delta = (f_data["diam"] != m_data["diam"]) or (f_data["mat"] != m_data["mat"])
-        
-        if geom_delta or spec_delta:
-            to_update.append(pid)
-            affected_nodes = [m_data["start"], m_data["end"]]
-            blast_radius_nodes.extend(affected_nodes)
-            
-            for neighbor_id, n_data in MASTER_PIPES.items():
-                if neighbor_id != pid and (n_data["start"] in affected_nodes or n_data["end"] in affected_nodes):
-                    blast_radius_pipes.append(neighbor_id)
-
-blast_radius_pipes = list(set(blast_radius_pipes) - set(to_update))
-blast_radius_nodes = list(set(blast_radius_nodes))
-
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("🟢 CREATE (Nuevas)", len(to_create))
-col2.metric("🔴 UPDATE / REPLACE", len(to_update))
-col3.metric("🟠 BLAST RADIUS (Vecinos)", len(blast_radius_pipes) + len(blast_radius_nodes))
-col4.metric("⚡ Tiempo de Ejecución", "0.002 s")
-
-fig = go.Figure()
-
-for pid, m_data in MASTER_PIPES.items():
-    x0, y0 = MASTER_NODES[m_data["start"]]
-    x1, y1 = MASTER_NODES[m_data["end"]]
+# --- GENERADOR DE DATASETS REALISTAS (O SUBIDA DE CSV REALES) ---
+def generate_realistic_datasets(num_pipes=500):
+    np.random.seed(42)
+    master_rows = []
+    cols = int(math.sqrt(num_pipes))
     
-    if pid in to_update:
-        fig.add_trace(go.Scatter(
-            x=[x0, x1], y=[y0, y1], mode="lines+text",
-            line=dict(color="#FF4B4B", width=3, dash="dash"),
-            text=[f"{pid} (Master - Old)", ""], textposition="bottom center",
-            name=f"{pid} (Obsoleto)"
-        ))
-        off = field_pipes[pid]["offset_y"]
-        fig.add_trace(go.Scatter(
-            x=[x0, x1], y=[y0 + off, y1 + off], mode="lines+text",
-            line=dict(color="#00CC96", width=5),
-            text=[f"{pid} (Field - DN{field_pipes[pid]['diam']})", ""], textposition="top center",
-            name=f"{pid} (Modificado)"
-        ))
-    elif pid in blast_radius_pipes:
-        fig.add_trace(go.Scatter(
-            x=[x0, x1], y=[y0, y1], mode="lines+text",
-            line=dict(color="#FFA15A", width=5),
-            text=[f"{pid} (Blast Radius)", ""], textposition="top center",
-            name=f"{pid} (Revisar Conexión)"
-        ))
+    for i in range(num_pipes):
+        r, c = divmod(i, cols)
+        aid = f"P-{1000 + i}"
+        start_node = f"MH-{r}_{c}"
+        end_node = f"MH-{r}_{c+1}"
+        x0, y0, z0 = float(c * 15), float(r * 15), 0.0
+        x1, y1, z1 = float((c + 1) * 15), float(r * 15), 0.0
+        diam = int(np.random.choice([150, 200, 300, 400]))
+        mat = str(np.random.choice(["Steel", "HDPE", "Ductile Iron"]))
+        master_rows.append([aid, start_node, end_node, x0, y0, z0, x1, y1, z1, diam, mat])
+        
+    columns = ["ASSET_ID", "START_NODE", "END_NODE", "X0", "Y0", "Z0", "X1", "Y1", "Z1", "DIAMETER", "MATERIAL"]
+    df_master = pd.DataFrame(master_rows, columns=columns)
+    
+    # Crear Layer B con ruido GPS realista, desviaciones reales, cambios de material, altas y bajas
+    df_field = df_master.copy()
+    
+    # 1. Ruido GPS milimétrico (1-3 cm) en el 20% de los elementos (debe ser filtrado por tolerancia)
+    noise_idx = np.random.choice(df_field.index, size=int(num_pipes * 0.2), replace=False)
+    df_field.loc[noise_idx, "Y0"] += np.random.uniform(-0.02, 0.02, size=len(noise_idx))
+    df_field.loc[noise_idx, "Y1"] += np.random.uniform(-0.02, 0.02, size=len(noise_idx))
+    
+    # 2. Desviaciones reales de trazado (> 0.5m) en 4 elementos
+    shift_idx = df_field.index[5:9]
+    df_field.loc[shift_idx, "Y0"] += 1.5
+    df_field.loc[shift_idx, "Y1"] += 1.5
+    
+    # 3. Sustituciones silenciosas de diámetro/material en 3 elementos
+    spec_idx = df_field.index[12:15]
+    df_field.loc[spec_idx, "DIAMETER"] = 500
+    df_field.loc[spec_idx, "MATERIAL"] = "Copper"
+    
+    # 4. Eliminar 2 elementos (Decommissioned)
+    df_field = df_field.drop(df_field.index[20:22]).reset_index(drop=True)
+    
+    # 5. Añadir 3 elementos nuevos (New Installations)
+    new_rows = [
+        ["P-9901", "MH-0_0", "MH-1_0", 0.0, 0.0, 0.0, 0.0, 15.0, 0.0, 250, "Steel"],
+        ["P-9902", "MH-1_1", "MH-2_1", 15.0, 15.0, 0.0, 15.0, 30.0, 0.0, 250, "Steel"],
+        ["P-9903", "MH-2_2", "MH-3_2", 30.0, 30.0, 0.0, 30.0, 45.0, 0.0, 300, "HDPE"],
+    ]
+    df_field = pd.concat([df_field, pd.DataFrame(new_rows, columns=columns)], ignore_index=True)
+    
+    return df_master, df_field
+
+# --- SIDEBAR: INGESTA DE DATOS ---
+st.sidebar.header("1. Data Ingestion Source")
+data_mode = st.sidebar.radio("Select input mode:", ["Benchmark Dataset (Synthetic CAD/GIS)", "Upload Real CSV Files"])
+
+if data_mode == "Benchmark Dataset (Synthetic CAD/GIS)":
+    n_elements = st.sidebar.select_slider("Network size (elements):", options=[100, 500, 1500, 5000], value=500)
+    df_master, df_field = generate_realistic_datasets(n_elements)
+else:
+    st.sidebar.info("Required columns: ASSET_ID, START_NODE, END_NODE, X0, Y0, Z0, X1, Y1, Z1, DIAMETER, MATERIAL")
+    file_master = st.sidebar.file_uploader("Upload Master_Network.csv", type=["csv"])
+    file_field = st.sidebar.file_uploader("Upload Field_Layer_B.csv", type=["csv"])
+    if file_master and file_field:
+        df_master = pd.read_csv(file_master)
+        df_field = pd.read_csv(file_field)
     else:
-        fig.add_trace(go.Scatter(
-            x=[x0, x1], y=[y0, y1], mode="lines+text",
-            line=dict(color="#636EFA", width=3),
-            text=[f"{pid} (OK)", ""], textposition="top center",
-            name=f"{pid} (Sin cambios)"
-        ))
+        st.warning("👈 Upload both Master and Field CSV files in the sidebar (or switch to Benchmark Dataset to test immediately).")
+        st.stop()
 
-if add_new_pipe:
-    x0, y0 = MASTER_NODES["MH-04"]
-    x1, y1 = MASTER_NODES["MH-05"]
-    fig.add_trace(go.Scatter(
-        x=[x0, x1], y=[y0, y1], mode="lines+text",
-        line=dict(color="#00CC96", width=5),
-        text=["P-105 (NEW)", ""], textposition="middle right",
-        name="P-105 (Nueva)"
-    ))
+st.sidebar.header("2. QA/QC Tolerance Rules")
+gps_tolerance = st.sidebar.slider("3D Euclidean GPS Tolerance (m):", 0.00, 0.25, 0.05, step=0.01)
 
-for nid, (nx, ny) in MASTER_NODES.items():
-    is_affected = nid in blast_radius_nodes
-    fig.add_trace(go.Scatter(
-        x=[nx], y=[ny], mode="markers+text",
-        marker=dict(size=16, color="#FFA15A" if is_affected else "#1F77B4", line=dict(width=2, color="white")),
-        text=[nid], textposition="bottom center",
-        name=f"Nodo {nid}"
-    ))
+# --- MOTOR PYTHON SPATIAL DELTA (LÓGICA EXACTA DE PRODUCCIÓN) ---
+t_start = time.perf_counter()
 
-fig.update_layout(
-    height=480, showlegend=False,
-    xaxis=dict(title="Coordenada X (m)", range=[-3, 34], gridcolor="rgba(200,200,200,0.2)"),
-    yaxis=dict(title="Coordenada Y (m)", range=[-5, 14], gridcolor="rgba(200,200,200,0.2)"),
-    margin=dict(l=20, r=20, t=20, b=20)
-)
+# 1. Cargar en Hash Maps O(1)
+master_map = df_master.set_index("ASSET_ID").to_dict("index")
+field_map = df_field.set_index("ASSET_ID").to_dict("index")
 
-st.plotly_chart(fig, use_container_width=True)
+results = []
+primary_affected_nodes = set()
+primary_changed_ids = set()
+
+# 2. Multi-Criteria Diff (CREATE & UPDATE)
+for aid, f_row in field_map.items():
+    if aid not in master_map:
+        results.append({
+            "ASSET_ID": aid, "ACTION": "CREATE", "REASON": "New field installation",
+            "DELTA_DIST_M": 0.0, "OLD_SPEC": "-", "NEW_SPEC": f"DN{f_row['DIAMETER']} {f_row['MATERIAL']}"
+        })
+        primary_changed_ids.add(aid)
+        primary_affected_nodes.update([f_row["START_NODE"], f_row["END_NODE"]])
+    else:
+        m_row = master_map[aid]
+        # Distancia Euclidiana 3D en extremos
+        d0 = math.dist((m_row["X0"], m_row["Y0"], m_row["Z0"]), (f_row["X0"], f_row["Y0"], f_row["Z0"]))
+        d1 = math.dist((m_row["X1"], m_row["Y1"], m_row["Z1"]), (f_row["X1"], f_row["Y1"], f_row["Z1"]))
+        max_shift = round(max(d0, d1), 3)
+        
+        geom_changed = max_shift > gps_tolerance
+        spec_changed = (m_row["DIAMETER"] != f_row["DIAMETER"]) or (m_row["MATERIAL"] != f_row["MATERIAL"])
+        
+        if geom_changed or spec_changed:
+            reasons = []
+            if geom_changed: reasons.append(f"3D Shift ({max_shift}m)")
+            if spec_changed: reasons.append("Spec/Material Diff")
+            
+            results.append({
+                "ASSET_ID": aid, "ACTION": "UPDATE / REPLACE", "REASON": " + ".join(reasons),
+                "DELTA_DIST_M": max_shift,
+                "OLD_SPEC": f"DN{m_row['DIAMETER']} {m_row['MATERIAL']}",
+                "NEW_SPEC": f"DN{f_row['DIAMETER']} {f_row['MATERIAL']}"
+            })
+            primary_changed_ids.add(aid)
+            primary_affected_nodes.update([m_row["START_NODE"], m_row["END_NODE"]])
+
+# 3. Detectar DELETED
+for aid, m_row in master_map.items():
+    if aid not in field_map:
+        results.append({
+            "ASSET_ID": aid, "ACTION": "DELETE", "REASON": "Missing in Field Layer B",
+            "DELTA_DIST_M": 0.0, "OLD_SPEC": f"DN{m_row['DIAMETER']} {m_row['MATERIAL']}", "NEW_SPEC": "-"
+        })
+        primary_changed_ids.add(aid)
+        primary_affected_nodes.update([m_row["START_NODE"], m_row["END_NODE"]])
+
+# 4. Topological Blast-Radius Tracing (BOUNDARY_TOUCHES equivalente)
+blast_radius_ids = set()
+for aid, m_row in master_map.items():
+    if aid not in primary_changed_ids:
+        if m_row["START_NODE"] in primary_affected_nodes or m_row["END_NODE"] in primary_affected_nodes:
+            blast_radius_ids.add(aid)
+            results.append({
+                "ASSET_ID": aid, "ACTION": "BLAST_RADIUS_CHECK",
+                "REASON": f"Connected to modified node ({m_row['START_NODE']}/{m_row['END_NODE']})",
+                "DELTA_DIST_M": 0.0,
+                "OLD_SPEC": f"DN{m_row['DIAMETER']} {m_row['MATERIAL']}",
+                "NEW_SPEC": f"DN{m_row['DIAMETER']} {m_row['MATERIAL']}"
+            })
+
+exec_time_ms = (time.perf_counter() - t_start) * 1000
+df_triage = pd.DataFrame(results)
+
+# --- MÉTRICAS DE RENDIMIENTO ---
+c1, c2, c3, c4, c5 = st.columns(5)
+c1.metric("Total Elements Audited", f"{len(master_map):,}")
+c2.metric("🟢 CREATE", len(df_triage[df_triage["ACTION"] == "CREATE"]) if not df_triage.empty else 0)
+c3.metric("🔴 UPDATE / DELETE", len(df_triage[df_triage["ACTION"].isin(["UPDATE / REPLACE", "DELETE"])]) if not df_triage.empty else 0)
+c4.metric("🟠 BLAST RADIUS", len(blast_radius_ids))
+c5.metric("⚡ Hash-Map Exec Time", f"{exec_time_ms:.2f} ms")
+
+# --- VISUALIZACIÓN ESPACIAL + TABLA DE TRIAGE ---
+tab1, tab2 = st.tabs(["📋 Actionable Triage Report (Exportable)", "🗺️ Spatial Viewport Preview"])
+
+with tab1:
+    st.subheader("Automated Engineering Triage Log")
+    if df_triage.empty:
+        st.success("Zero deltas detected above GPS tolerance threshold. Digital Twin is 100% synchronized.")
+    else:
+        st.dataframe(df_triage, use_container_width=True, hide_index=True)
+        csv_export = df_triage.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label="📥 Download Actionable Triage CSV (For Field / Power BI)",
+            data=csv_export,
+            file_name="spatial_delta_triage_report.csv",
+            mime="text/csv"
+        )
+
+with tab2:
+    st.subheader("Spatial Delta Map (Highlighting Flagged & Blast-Radius Assets)")
+    fig = go.Figure()
+    
+    # Mostrar muestra espacial (hasta 300 elementos para fluidez en navegador)
+    plot_master = df_master.head(300)
+    
+    # Tuberías sin cambios
+    unchanged = plot_master[~plot_master["ASSET_ID"].isin(primary_changed_ids | blast_radius_ids)]
+    ux, uy = [], []
+    for _, r in unchanged.iterrows():
+        ux.extend([r["X0"], r["X1"], None])
+        uy.extend([r["Y0"], r["Y1"], None])
+    fig.add_trace(go.Scatter(x=ux, y=uy, mode="lines", line=dict(color="rgba(150,150,150,0.35)", width=1.5), name="Unchanged (OK)"))
+    
+    # Blast radius (Ámbar)
+    br_df = df_master[df_master["ASSET_ID"].isin(blast_radius_ids)]
+    bx, by = [], []
+    for _, r in br_df.iterrows():
+        bx.extend([r["X0"], r["X1"], None])
+        by.extend([r["Y0"], r["Y1"], None])
+    fig.add_trace(go.Scatter(x=bx, y=by, mode="lines", line=dict(color="#FFA15A", width=4), name="Blast Radius (Review)"))
+    
+    # Modificados / Eliminados (Rojo)
+    upd_df = df_master[df_master["ASSET_ID"].isin(primary_changed_ids)]
+    rx, ry = [], []
+    for _, r in upd_df.iterrows():
+        rx.extend([r["X0"], r["X1"], None])
+        ry.extend([r["Y0"], r["Y1"], None])
+    fig.add_trace(go.Scatter(x=rx, y=ry, mode="lines", line=dict(color="#FF4B4B", width=4, dash="dash"), name="Master Removed/Replaced"))
+    
+    # Nuevas posiciones / Nuevos elementos (Verde)
+
