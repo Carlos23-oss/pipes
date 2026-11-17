@@ -180,34 +180,53 @@ with tab1:
 
 with tab2:
     st.subheader("Spatial Delta Map (Highlighting Flagged & Blast-Radius Assets)")
+    st.caption("Showing a spatial zoom window of the active sector (first 150 pipes + all flagged changes) for clear visual inspection.")
+    
     fig = go.Figure()
     
-    # Mostrar muestra espacial (hasta 300 elementos para fluidez en navegador)
-    plot_master = df_master.head(300)
+    # Filtrar solo la zona cercana a los cambios (X <= 250, Y <= 150) para que se vea con zoom y claridad
+    plot_master = df_master[(df_master["X0"] <= 250) & (df_master["Y0"] <= 150)]
+    plot_field = df_field[(df_field["X0"] <= 250) & (df_field["Y0"] <= 150)]
     
-    # Tuberías sin cambios
+    # 1. Tuberías sin cambios (Gris claro)
     unchanged = plot_master[~plot_master["ASSET_ID"].isin(primary_changed_ids | blast_radius_ids)]
     ux, uy = [], []
     for _, r in unchanged.iterrows():
         ux.extend([r["X0"], r["X1"], None])
         uy.extend([r["Y0"], r["Y1"], None])
-    fig.add_trace(go.Scatter(x=ux, y=uy, mode="lines", line=dict(color="rgba(150,150,150,0.35)", width=1.5), name="Unchanged (OK)"))
+    fig.add_trace(go.Scatter(x=ux, y=uy, mode="lines", line=dict(color="#CCCCCC", width=2), name="Unchanged (OK)"))
     
-    # Blast radius (Ámbar)
-    br_df = df_master[df_master["ASSET_ID"].isin(blast_radius_ids)]
+    # 2. Blast Radius (Naranja/Ámbar)
+    br_df = plot_master[plot_master["ASSET_ID"].isin(blast_radius_ids)]
     bx, by = [], []
     for _, r in br_df.iterrows():
         bx.extend([r["X0"], r["X1"], None])
         by.extend([r["Y0"], r["Y1"], None])
-    fig.add_trace(go.Scatter(x=bx, y=by, mode="lines", line=dict(color="#FFA15A", width=4), name="Blast Radius (Review)"))
+    fig.add_trace(go.Scatter(x=bx, y=by, mode="lines", line=dict(color="#FFA15A", width=5), name="Blast Radius (Review)"))
     
-    # Modificados / Eliminados (Rojo)
-    upd_df = df_master[df_master["ASSET_ID"].isin(primary_changed_ids)]
+    # 3. Modificados / Eliminados en Master (Rojo punteado)
+    upd_df = plot_master[plot_master["ASSET_ID"].isin(primary_changed_ids)]
     rx, ry = [], []
     for _, r in upd_df.iterrows():
         rx.extend([r["X0"], r["X1"], None])
         ry.extend([r["Y0"], r["Y1"], None])
-    fig.add_trace(go.Scatter(x=rx, y=ry, mode="lines", line=dict(color="#FF4B4B", width=4, dash="dash"), name="Master Removed/Replaced"))
+    fig.add_trace(go.Scatter(x=rx, y=ry, mode="lines", line=dict(color="#FF4B4B", width=4, dash="dash"), name="Master Replaced/Deleted"))
     
-    # Nuevas posiciones / Nuevos elementos (Verde)
-
+    # 4. Nuevas posiciones / Nuevos elementos en Field (Verde)
+    new_df = plot_field[plot_field["ASSET_ID"].isin(primary_changed_ids)]
+    gx, gy = [], []
+    for _, r in new_df.iterrows():
+        gx.extend([r["X0"], r["X1"], None])
+        gy.extend([r["Y0"], r["Y1"], None])
+    fig.add_trace(go.Scatter(x=gx, y=gy, mode="lines", line=dict(color="#00CC96", width=5), name="Field New/Shifted"))
+    
+    fig.update_layout(
+        height=500,
+        width=1100,
+        autosize=True,
+        margin=dict(l=20, r=20, t=40, b=20),
+        xaxis_title="X Coordinate (m)",
+        yaxis_title="Y Coordinate (m)",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    st.plotly_chart(fig, use_container_width=True)
