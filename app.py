@@ -23,7 +23,7 @@ def generate_realistic_datasets(num_pipes=500):
         end_node = f"MH-{r}_{c+1}"
         x0, y0, z0 = float(c * 15), float(r * 15), 0.0
         x1, y1, z1 = float((c + 1) * 15), float(r * 15), 0.0
-        diam = int(np.random.choice([150, 200, 300, 400]))
+        diam = int(np.random.choice([150, 200, 250, 300]))
         mat = str(np.random.choice(["Steel", "HDPE", "Ductile Iron"]))
         master_rows.append([aid, start_node, end_node, x0, y0, z0, x1, y1, z1, diam, mat])
         
@@ -71,10 +71,15 @@ else:
     file_field = st.sidebar.file_uploader("Upload Field_Layer_B.csv", type=["csv"])
     if file_master and file_field:
         try:
-            df_master = pd.read_csv(file_master, sep=None, engine="python", encoding="utf-8-sig", on_bad_lines="skip")
-            df_field = pd.read_csv(file_field, sep=None, engine="python", encoding="utf-8-sig", on_bad_lines="skip")
+            raw_head = file_master.read(10)
+            file_master.seek(0)
+            if b"{\\rtf" in raw_head:
+                st.error("⚠️ Uploaded file is a Mac Rich Text (.rtf) file renamed as .csv. Please upload a plain-text CSV.")
+                st.stop()
+                
+            df_master = pd.read_csv(file_master, encoding="utf-8-sig")
+            df_field = pd.read_csv(file_field, encoding="utf-8-sig")
             
-            # Limpiar espacios ocultos y poner encabezados en mayúsculas
             df_master.columns = df_master.columns.str.strip().str.upper()
             df_field.columns = df_field.columns.str.strip().str.upper()
             
@@ -95,7 +100,6 @@ gps_tolerance = st.sidebar.slider("3D Euclidean GPS Tolerance (m):", 0.00, 0.25,
 # --- 3. MOTOR PYTHON SPATIAL DELTA ---
 t_start = time.perf_counter()
 
-# Cargar en Hash Maps O(1)
 master_map = df_master.set_index("ASSET_ID").to_dict("index")
 field_map = df_field.set_index("ASSET_ID").to_dict("index")
 
@@ -170,10 +174,17 @@ c3.metric("🔴 UPDATE / DELETE", len(df_triage[df_triage["ACTION"].isin(["UPDAT
 c4.metric("🟠 BLAST RADIUS", len(blast_radius_ids))
 c5.metric("⚡ Hash-Map Exec Time", f"{exec_time_ms:.2f} ms")
 
-# --- 5. PESTAÑAS INTERACTIVAS ---
-tab1, tab2, tab3 = st.tabs(["📋 Actionable Triage Report", "🗺️ Spatial Viewport Preview", "🐍 Live Python Engine Code"])
+st.divider()
 
-with tab1:
+# --- 5. SELECTOR DE VISTAS (EVITA COLAPSO DE PLOTLY) ---
+view_mode = st.radio(
+    "Select View:",
+    ["📋 Actionable Triage Report", "🗺️ Spatial Viewport Preview", "🐍 Live Python Engine Code"],
+    horizontal=True,
+    label_visibility="collapsed"
+)
+
+if view_mode == "📋 Actionable Triage Report":
     st.subheader("Automated Engineering Triage Log")
     if df_triage.empty:
         st.success("✅ Zero deltas detected above GPS tolerance threshold. Digital Twin is 100% synchronized.")
@@ -199,7 +210,3 @@ with tab1:
                 act = row["ACTION"]
                 if act in ["CREATE", "UPDATE / REPLACE"]:
                     updated_master_map[aid] = field_map[aid]
-                elif act == "DELETE" and aid in updated_master_map:
-                    del updated_master_map[aid]
-            
-            df_master_updated = pd.DataFrame.from_dict(updated_master_map, orient="index").reset_index()
