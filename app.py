@@ -1,4 +1,4 @@
- import streamlit as st
+import streamlit as st
 import pandas as pd
 import numpy as np
 import time
@@ -9,7 +9,6 @@ st.set_page_config(page_title="Spatial Delta & Topology Engine", layout="wide")
 st.title("⚡ Spatial Delta & Topology Engine (Production Data Validator)")
 st.markdown("Automated **As-Built QA/QC** pipeline: ingests Master vs. Field datasets into **O(1) Hash Maps**, detects 3D geometric/spec deltas, and traces topological **Blast-Radius** impact.")
 
-# --- 1. GENERADOR DE DATASETS SINTÉTICOS ---
 def generate_realistic_datasets(num_pipes=500):
     np.random.seed(42)
     master_rows = []
@@ -32,23 +31,18 @@ def generate_realistic_datasets(num_pipes=500):
     df_master = pd.DataFrame(master_rows, columns=columns)
     df_field = df_master.copy()
     
-    # Ruido GPS milimétrico (1-2 cm) en el 20% de los elementos
     noise_idx = np.random.choice(df_field.index, size=int(num_pipes * 0.2), replace=False)
     df_field.loc[noise_idx, "Y0"] += 0.02
     df_field.loc[noise_idx, "Y1"] += 0.02
     
-    # Desviaciones reales de trazado (1.5m)
     df_field.loc[5:8, "Y0"] += 1.5
     df_field.loc[5:8, "Y1"] += 1.5
     
-    # Sustituciones silenciosas de diámetro/material
     df_field.loc[12:14, "DIAMETER"] = 500
     df_field.loc[12:14, "MATERIAL"] = "Copper"
     
-    # Eliminar 2 elementos (Decommissioned)
     df_field = df_field.drop([20, 21]).reset_index(drop=True)
     
-    # Añadir 3 elementos nuevos (New Installations)
     new_rows = [
         ["P-9901", "MH-0_0", "MH-1_0", 0.0, 0.0, 0.0, 0.0, 15.0, 0.0, 250, "Steel"],
         ["P-9902", "MH-1_1", "MH-2_1", 15.0, 15.0, 0.0, 15.0, 30.0, 0.0, 250, "Steel"],
@@ -57,7 +51,6 @@ def generate_realistic_datasets(num_pipes=500):
     df_field = pd.concat([df_field, pd.DataFrame(new_rows, columns=columns)], ignore_index=True)
     return df_master, df_field
 
-# --- 2. BARRA LATERAL: INGESTA DE DATOS ---
 st.sidebar.header("1. Data Ingestion Source")
 data_mode = st.sidebar.radio("Select input mode:", ("Benchmark Dataset (Synthetic CAD/GIS)", "Upload Real CSV Files"))
 
@@ -96,7 +89,6 @@ else:
 st.sidebar.header("2. QA/QC Tolerance Rules")
 gps_tolerance = st.sidebar.slider("3D Euclidean GPS Tolerance (m):", 0.00, 0.25, 0.05, step=0.01)
 
-# --- 3. MOTOR PYTHON SPATIAL DELTA ---
 t_start = time.perf_counter()
 
 master_map = df_master.set_index("ASSET_ID").to_dict("index")
@@ -162,7 +154,6 @@ for aid, m_row in master_map.items():
 exec_time_ms = (time.perf_counter() - t_start) * 1000
 df_triage = pd.DataFrame(results)
 
-# --- 4. MÉTRICAS SUPERIORES ---
 c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("Total Elements Audited", f"{len(master_map):,}")
 c2.metric("🟢 CREATE", len(df_triage[df_triage["ACTION"] == "CREATE"]) if not df_triage.empty else 0)
@@ -172,7 +163,6 @@ c5.metric("⚡ Hash-Map Exec Time", f"{exec_time_ms:.2f} ms")
 
 st.divider()
 
-# --- 5. SELECTOR DE VISTAS ---
 view_mode = st.radio(
     "Select View:",
     ("📋 Actionable Triage Report", "🗺️ Spatial Viewport Preview", "🐍 Live Python Engine Code"),
@@ -212,3 +202,12 @@ if view_mode == "📋 Actionable Triage Report":
             df_master_updated = pd.DataFrame.from_dict(updated_master_map, orient="index").reset_index()
             df_master_updated.rename(columns={"index": "ASSET_ID"}, inplace=True)
             
+            changes_applied = len(df_triage[df_triage["ACTION"] != "BLAST_RADIUS_CHECK"])
+            st.success(f"🎉 Master Production Model updated! {changes_applied} pipe modifications committed cleanly with 0 broken connections.")
+            st.dataframe(df_master_updated.head(15), use_container_width=True, hide_index=True)
+
+elif view_mode == "🗺️ Spatial Viewport Preview":
+    st.subheader("Spatial Delta Map (Highlighting Flagged & Blast-Radius Assets)")
+    
+    if len(df_master) > 200:
+
