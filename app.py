@@ -162,7 +162,7 @@ c4.metric("🟠 BLAST RADIUS", len(blast_radius_ids))
 c5.metric("⚡ Hash-Map Exec Time", f"{exec_time_ms:.2f} ms")
 
 # --- VISUALIZACIÓN ESPACIAL + TABLA DE TRIAGE ---
-tab1, tab2 = st.tabs(["📋 Actionable Triage Report (Exportable)", "🗺️ Spatial Viewport Preview"])
+tab1, tab2, tab3 = st.tabs(["📋 Actionable Triage Report", "🗺️ Spatial Viewport Preview", "🐍 Live Python Engine Code"])
 
 with tab1:
     st.subheader("Automated Engineering Triage Log")
@@ -254,3 +254,34 @@ with tab2:
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
     st.plotly_chart(fig, use_container_width=True)
+with tab3:
+    st.subheader("Live Python Hash-Map & Topology Logic")
+    st.markdown("This is the exact **O(1) dictionary diffing** and **spatial connectivity** code running behind the scenes on your uploaded CSVs:")
+    
+    st.code('''
+# 1. Ingest Master & Field tables into O(1) Memory Hash Maps
+master_map = df_master.set_index("ASSET_ID").to_dict("index")
+field_map  = df_field.set_index("ASSET_ID").to_dict("index")
+
+# 2. Multi-Criteria Diff (Existence + 3D Euclidean Delta + Engineering Specs)
+for aid, f_row in field_map.items():
+    if aid not in master_map:
+        flag_action(aid, "CREATE")
+    else:
+        m_row = master_map[aid]
+        shift_3d = max(
+            math.dist((m_row["X0"], m_row["Y0"], m_row["Z0"]), (f_row["X0"], f_row["Y0"], f_row["Z0"])),
+            math.dist((m_row["X1"], m_row["Y1"], m_row["Z1"]), (f_row["X1"], f_row["Y1"], f_row["Z1"]))
+        )
+        if shift_3d > gps_tolerance or (m_row["DIAMETER"], m_row["MATERIAL"]) != (f_row["DIAMETER"], f_row["MATERIAL"]):
+            flag_action(aid, "UPDATE / REPLACE")
+            primary_affected_nodes.update([m_row["START_NODE"], m_row["END_NODE"]])
+
+# 3. Blast-Radius Tracing (Capture all connected upstream/downstream neighbors)
+for aid, m_row in master_map.items():
+    if aid not in primary_changed_ids:
+        if m_row["START_NODE"] in primary_affected_nodes or m_row["END_NODE"] in primary_affected_nodes:
+            flag_action(aid, "BLAST_RADIUS_CHECK")
+    ''', language="python")
+    
+    st.info("💡 Tip: Upload 'Master_Network.csv' and 'Field_Layer_B.csv' in the sidebar to watch this exact logic process real engineering records.")
