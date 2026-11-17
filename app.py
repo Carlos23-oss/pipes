@@ -60,6 +60,12 @@ def generate_realistic_datasets(num_pipes=500):
     df_field = pd.concat([df_field, pd.DataFrame(new_rows, columns=columns)], ignore_index=True)
     
     return df_master, df_field
+        df_master = pd.read_csv(file_master, sep=None, engine="python", encoding="utf-8-sig", on_bad_lines="skip")
+        df_field = pd.read_csv(file_field, sep=None, engine="python", encoding="utf-8-sig", on_bad_lines="skip")
+        
+        # Sanitize column headers (remove hidden spaces/BOM characters)
+        df_master.columns = df_master.columns.str.strip().str.upper()
+        df_field.columns = df_field.columns.str.strip().str.upper()
 
 # --- SIDEBAR: INGESTA DE DATOS ---
 st.sidebar.header("1. Data Ingestion Source")
